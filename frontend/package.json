@@ -1,0 +1,18 @@
+{
+  "name": "pwa-frontend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vite": "^5.0.0",
+    "vite-plugin-pwa": "^0.17.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-legacy": "^5.0.0"
+  }
+}
+

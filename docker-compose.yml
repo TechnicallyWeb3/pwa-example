@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: pwa-example-postgres
+    environment:
+      POSTGRES_USER: pwa_user
+      POSTGRES_PASSWORD: pwa_password
+      POSTGRES_DB: pwa_db
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pwa_example_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pwa_user -d pwa_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - pwa_example_network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pwa-example-backend
+    ports:
+      - "3030:3000"
+    environment:
+      DATABASE_URL: postgresql://pwa_user:pwa_password@postgres:5432/pwa_db
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - pwa_example_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pwa-example-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:3030
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - pwa_example_network
+    restart: unless-stopped
+
+volumes:
+  pwa_example_postgres_data:
+    name: pwa_example_postgres_data
+
+networks:
+  pwa_example_network:
+    name: pwa_example_network
+    driver: bridge
+
