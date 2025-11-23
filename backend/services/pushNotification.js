@@ -10,9 +10,17 @@ export async function sendPushNotification(userId, notification) {
     );
 
     if (subscriptions.rows.length === 0) {
-      console.log(`No push subscriptions found for user ${userId}`);
+      console.log(`⚠️ No push subscriptions found for user ${userId} - notification will not be sent`);
+      // Still log this as a failed attempt
+      await db.query(
+        `INSERT INTO notification_logs (notification_id, user_id, status, error_message)
+         VALUES ($1, $2, 'failed', $3)`,
+        [notification.id, userId, 'No push subscription found for user']
+      ).catch(err => console.error('Error logging missing subscription:', err));
       return { sent: 0, failed: 0 };
     }
+    
+    console.log(`📱 Found ${subscriptions.rows.length} push subscription(s) for user ${userId}`);
 
     const payload = JSON.stringify({
       title: notification.title,

@@ -62,7 +62,10 @@ router.post('/', authenticateToken, async (req, res) => {
       [userId, title, body, scheduled_time, repeat_daily || false]
     );
 
-    res.status(201).json(result.rows[0]);
+    const notification = result.rows[0];
+    console.log(`📅 Notification created - ID: ${notification.id}, User: ${userId}, Title: "${notification.title}", Scheduled: ${notification.scheduled_time}, Repeat Daily: ${notification.repeat_daily}`);
+
+    res.status(201).json(notification);
   } catch (error) {
     console.error('Create notification error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -109,7 +112,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Notification not found' });
     }
 
-    res.json(result.rows[0]);
+    const notification = result.rows[0];
+    if (is_active !== undefined) {
+      console.log(`🔄 Notification ${is_active ? 'activated' : 'deactivated'} - ID: ${notification.id}, User: ${userId}, Title: "${notification.title}"`);
+    } else {
+      console.log(`✏️ Notification updated - ID: ${notification.id}, User: ${userId}, Title: "${notification.title}"`);
+    }
+
+    res.json(notification);
   } catch (error) {
     console.error('Update notification error:', error);
     res.status(500).json({ error: 'Internal server error' });

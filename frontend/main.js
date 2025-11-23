@@ -1,9 +1,28 @@
-// Use environment variable or fallback to localhost
-// In Docker, VITE_API_URL should be set to http://localhost:3030
-// But in browser, we need to use the host where backend is accessible
-const API_BASE_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' 
-  ? `${window.location.protocol}//${window.location.hostname}:3030`
-  : 'http://localhost:3030');
+// Use runtime hostname when available (for network access from other devices)
+// Fallback to environment variable or localhost
+// This ensures the API URL works when accessing from different IP addresses
+function getApiBaseUrl() {
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+    // Use the current hostname so it works from any IP address on the network
+    const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    
+    // Only use localhost if we're actually on localhost/127.0.0.1
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '') {
+      return import.meta.env.VITE_API_URL || 'http://localhost:3030';
+    }
+    
+    // Use the actual hostname (e.g., 192.168.1.98) with port 3030
+    // This allows the app to work when accessed from other devices on the network
+    return `${protocol}//${hostname}:3030`;
+  }
+  
+  // Fallback for SSR or before window is available
+  return import.meta.env.VITE_API_URL || 'http://localhost:3030';
+}
+
+// Compute API_BASE_URL at runtime to ensure we have the correct hostname
+const API_BASE_URL = getApiBaseUrl();
 
 let currentUser = null;
 let authToken = null;
@@ -11,6 +30,12 @@ let vapidPublicKey = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+  // Check for debug route
+  if (window.location.pathname === '/debug') {
+    showDebugPage();
+    return;
+  }
+
   // Check for saved auth token
   authToken = localStorage.getItem('authToken');
   currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
@@ -402,10 +427,167 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function showDebugPage() {
+  const container = document.querySelector('.container');
+  if (!container) return;
+
+  const debugInfo = {
+    apiBaseUrl: API_BASE_URL,
+    viteApiUrl: import.meta.env.VITE_API_URL || 'not set',
+    currentUrl: window.location.href,
+    hostname: window.location.hostname,
+    protocol: window.location.protocol,
+    userAgent: navigator.userAgent,
+    serviceWorkerSupported: 'serviceWorker' in navigator,
+    notificationSupported: 'Notification' in window,
+    pushManagerSupported: 'PushManager' in window,
+    localStorageAvailable: typeof Storage !== 'undefined',
+    currentUser: currentUser,
+    hasAuthToken: !!authToken,
+    vapidPublicKey: vapidPublicKey || 'not loaded',
+    timestamp: new Date().toISOString()
+  };
+
+  container.innerHTML = `
+    <div class="header">
+      <h1>🔧 Debug Information</h1>
+      <p style="margin-top: 10px;"><a href="/" style="color: white; text-decoration: underline;">← Back to App</a></p>
+    </div>
+    <div class="content">
+      <h2 style="margin-bottom: 20px;">Configuration</h2>
+      <div class="debug-section">
+        <div class="debug-item">
+          <strong>API Base URL (in use):</strong>
+          <code style="background: #e3f2fd; color: #1976d2; font-weight: bold;">${escapeHtml(debugInfo.apiBaseUrl)}</code>
+          <p style="font-size: 12px; color: #666; margin-top: 5px;">
+            ${debugInfo.hostname === 'localhost' || debugInfo.hostname === '127.0.0.1' || !debugInfo.hostname
+              ? 'Using env var or localhost (local access)'
+              : `Built from runtime hostname: ${debugInfo.hostname}:3030`}
+          </p>
+        </div>
+        <div class="debug-item">
+          <strong>VITE_API_URL (env):</strong>
+          <code>${escapeHtml(debugInfo.viteApiUrl)}</code>
+          ${debugInfo.hostname !== 'localhost' && debugInfo.hostname !== '127.0.0.1' && debugInfo.hostname
+            ? '<p style="font-size: 12px; color: #ff9800; margin-top: 5px;">⚠️ Ignored (using runtime hostname instead)</p>'
+            : '<p style="font-size: 12px; color: #666; margin-top: 5px;">Used when hostname is localhost</p>'}
+        </div>
+        <div class="debug-item">
+          <strong>Current URL:</strong>
+          <code>${escapeHtml(debugInfo.currentUrl)}</code>
+        </div>
+        <div class="debug-item">
+          <strong>Hostname:</strong>
+          <code>${escapeHtml(debugInfo.hostname)}</code>
+        </div>
+        <div class="debug-item">
+          <strong>Protocol:</strong>
+          <code>${escapeHtml(debugInfo.protocol)}</code>
+        </div>
+        <div class="debug-item">
+          <strong>Expected API URL:</strong>
+          <code>${escapeHtml(`${debugInfo.protocol}//${debugInfo.hostname}:3030`)}</code>
+        </div>
+      </div>
+
+      <h2 style="margin-top: 30px; margin-bottom: 20px;">Browser Capabilities</h2>
+      <div class="debug-section">
+        <div class="debug-item">
+          <strong>Service Worker:</strong>
+          <span class="badge ${debugInfo.serviceWorkerSupported ? 'success' : 'error'}">
+            ${debugInfo.serviceWorkerSupported ? '✓ Supported' : '✗ Not Supported'}
+          </span>
+        </div>
+        <div class="debug-item">
+          <strong>Notifications:</strong>
+          <span class="badge ${debugInfo.notificationSupported ? 'success' : 'error'}">
+            ${debugInfo.notificationSupported ? '✓ Supported' : '✗ Not Supported'}
+          </span>
+        </div>
+        <div class="debug-item">
+          <strong>Push Manager:</strong>
+          <span class="badge ${debugInfo.pushManagerSupported ? 'success' : 'error'}">
+            ${debugInfo.pushManagerSupported ? '✓ Supported' : '✗ Not Supported'}
+          </span>
+        </div>
+        <div class="debug-item">
+          <strong>Local Storage:</strong>
+          <span class="badge ${debugInfo.localStorageAvailable ? 'success' : 'error'}">
+            ${debugInfo.localStorageAvailable ? '✓ Available' : '✗ Not Available'}
+          </span>
+        </div>
+      </div>
+
+      <h2 style="margin-top: 30px; margin-bottom: 20px;">Authentication</h2>
+      <div class="debug-section">
+        <div class="debug-item">
+          <strong>Logged In:</strong>
+          <span class="badge ${debugInfo.hasAuthToken ? 'success' : 'warning'}">
+            ${debugInfo.hasAuthToken ? '✓ Yes' : '✗ No'}
+          </span>
+        </div>
+        <div class="debug-item">
+          <strong>User:</strong>
+          <code>${debugInfo.currentUser ? JSON.stringify(debugInfo.currentUser, null, 2) : 'Not logged in'}</code>
+        </div>
+        <div class="debug-item">
+          <strong>VAPID Public Key:</strong>
+          <code style="word-break: break-all;">${escapeHtml(debugInfo.vapidPublicKey)}</code>
+        </div>
+      </div>
+
+      <h2 style="margin-top: 30px; margin-bottom: 20px;">System Info</h2>
+      <div class="debug-section">
+        <div class="debug-item">
+          <strong>User Agent:</strong>
+          <code style="word-break: break-all; font-size: 12px;">${escapeHtml(debugInfo.userAgent)}</code>
+        </div>
+        <div class="debug-item">
+          <strong>Timestamp:</strong>
+          <code>${escapeHtml(debugInfo.timestamp)}</code>
+        </div>
+      </div>
+
+      <div style="margin-top: 30px; padding: 15px; background: #f5f5f5; border-radius: 8px;">
+        <h3 style="margin-bottom: 10px;">API Test</h3>
+        <button class="btn btn-primary" onclick="testApiConnection()">Test API Connection</button>
+        <div id="apiTestResult" style="margin-top: 10px;"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function testApiConnection() {
+  const resultDiv = document.getElementById('apiTestResult');
+  if (!resultDiv) return;
+
+  resultDiv.innerHTML = '<p style="color: #666;">Testing...</p>';
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/health`);
+    const data = await response.json();
+    resultDiv.innerHTML = `
+      <div class="success" style="margin-top: 10px;">
+        <strong>✓ Connection Successful!</strong><br>
+        Status: ${response.status}<br>
+        Response: ${JSON.stringify(data)}
+      </div>
+    `;
+  } catch (error) {
+    resultDiv.innerHTML = `
+      <div class="error" style="margin-top: 10px;">
+        <strong>✗ Connection Failed</strong><br>
+        Error: ${escapeHtml(error.message)}
+      </div>
+    `;
+  }
+}
+
 // Make functions globally available
 window.showLogin = showLogin;
 window.showRegister = showRegister;
 window.switchTab = switchTab;
 window.logout = logout;
 window.deleteNotification = deleteNotification;
+window.testApiConnection = testApiConnection;
 
