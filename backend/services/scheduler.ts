@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { db } from '../db/connection.js';
 import { sendPushNotification } from './pushNotification.js';
 
-export function initializeCronJobs() {
+export function initializeCronJobs(): void {
   // Check for notifications to send every minute
   cron.schedule('* * * * *', async () => {
     try {
@@ -25,12 +25,12 @@ export function initializeCronJobs() {
         [fiveMinutesAgo, oneMinuteFromNow]
       );
 
-      console.log(`🔍 Found ${notifications.rows.length} active notification(s) in range (${oneMinuteAgo.toISOString()} to ${oneMinuteFromNow.toISOString()})`);
+      console.log(`🔍 Found ${notifications.rows.length} active notification(s) in range (${fiveMinutesAgo.toISOString()} to ${oneMinuteFromNow.toISOString()})`);
       
       // Log details of found notifications
       if (notifications.rows.length > 0) {
-        notifications.rows.forEach(n => {
-          const timeDiff = Math.round((new Date(n.scheduled_time) - now) / 1000);
+        notifications.rows.forEach((n: any) => {
+          const timeDiff = Math.round((new Date(n.scheduled_time).getTime() - now.getTime()) / 1000);
           console.log(`   - ID ${n.id}: "${n.title}" scheduled for ${n.scheduled_time} (${timeDiff > 0 ? `in ${timeDiff}s` : `${Math.abs(timeDiff)}s ago`})`);
         });
       }
@@ -89,7 +89,7 @@ export function initializeCronJobs() {
            ORDER BY scheduled_time LIMIT 5`
         );
         console.log('📅 Upcoming notifications:');
-        upcoming.rows.forEach(n => {
+        upcoming.rows.forEach((n: any) => {
           console.log(`   - ID ${n.id}: "${n.title}" at ${n.scheduled_time}`);
         });
       }
@@ -98,4 +98,5 @@ export function initializeCronJobs() {
     }
   }, 2000);
 }
+
 

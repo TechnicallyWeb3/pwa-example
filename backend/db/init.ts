@@ -1,6 +1,6 @@
 import { db } from './connection.js';
 
-export async function initializeDatabase() {
+export async function initializeDatabase(): Promise<void> {
   try {
     // Create users table
     await db.query(`
@@ -57,4 +57,5 @@ export async function initializeDatabase() {
     console.error('Error initializing database:', error);
   }
 }
+
 

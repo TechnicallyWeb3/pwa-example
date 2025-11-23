@@ -1,7 +1,6 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { db } from '../db/connection.js';
-import { authenticateToken } from './auth.js';
-import { sendPushNotification } from '../services/pushNotification.js';
+import { authenticateToken, AuthRequest } from './auth.js';
 import webpush from 'web-push';
 
 const router = express.Router();
@@ -16,15 +15,15 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
 }
 
 // Get VAPID public key
-router.get('/vapid-public-key', (req, res) => {
+router.get('/vapid-public-key', (req: Request, res: Response) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
 // Save push subscription
-router.post('/subscribe', authenticateToken, async (req, res) => {
+router.post('/subscribe', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { subscription } = req.body;
-    const userId = req.user.userId;
+    const userId = req.user!.userId;
 
     if (!subscription || !subscription.endpoint || !subscription.keys) {
       return res.status(400).json({ error: 'Invalid subscription object' });
@@ -46,10 +45,10 @@ router.post('/subscribe', authenticateToken, async (req, res) => {
 });
 
 // Create notification
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { title, body, scheduled_time, repeat_daily } = req.body;
-    const userId = req.user.userId;
+    const userId = req.user!.userId;
 
     if (!title || !body || !scheduled_time) {
       return res.status(400).json({ error: 'Title, body, and scheduled_time are required' });
@@ -73,9 +72,9 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // Get user's notifications
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user.userId;
+    const userId = req.user!.userId;
 
     const result = await db.query(
       `SELECT * FROM notifications WHERE user_id = $1 ORDER BY scheduled_time DESC`,
@@ -90,11 +89,11 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Update notification
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { title, body, scheduled_time, repeat_daily, is_active } = req.body;
-    const userId = req.user.userId;
+    const userId = req.user!.userId;
 
     const result = await db.query(
       `UPDATE notifications
@@ -127,10 +126,10 @@ router.put('/:id', authenticateToken, async (req, res) => {
 });
 
 // Delete notification
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const userId = req.user.userId;
+    const userId = req.user!.userId;
 
     const result = await db.query(
       'DELETE FROM notifications WHERE id = $1 AND user_id = $2 RETURNING id',
@@ -149,9 +148,9 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // Get notification logs
-router.get('/logs', authenticateToken, async (req, res) => {
+router.get('/logs', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user.userId;
+    const userId = req.user!.userId;
 
     const result = await db.query(
       `SELECT nl.*, n.title, n.body
@@ -171,4 +170,5 @@ router.get('/logs', authenticateToken, async (req, res) => {
 });
 
 export default router;
+
 

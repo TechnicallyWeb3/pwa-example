@@ -1,7 +1,16 @@
 import webpush from 'web-push';
 import { db } from '../db/connection.js';
 
-export async function sendPushNotification(userId, notification) {
+interface Notification {
+  id: number;
+  title: string;
+  body: string;
+}
+
+export async function sendPushNotification(
+  userId: number,
+  notification: Notification
+): Promise<{ sent: number; failed: number }> {
   try {
     // Get user's push subscriptions
     const subscriptions = await db.query(
@@ -16,7 +25,7 @@ export async function sendPushNotification(userId, notification) {
         `INSERT INTO notification_logs (notification_id, user_id, status, error_message)
          VALUES ($1, $2, 'failed', $3)`,
         [notification.id, userId, 'No push subscription found for user']
-      ).catch(err => console.error('Error logging missing subscription:', err));
+      ).catch((err: Error) => console.error('Error logging missing subscription:', err));
       return { sent: 0, failed: 0 };
     }
     
@@ -36,10 +45,10 @@ export async function sendPushNotification(userId, notification) {
     for (const sub of subscriptions.rows) {
       try {
         const pushSubscription = {
-          endpoint: sub.endpoint,
+          endpoint: sub.endpoint as string,
           keys: {
-            p256dh: sub.p256dh,
-            auth: sub.auth
+            p256dh: sub.p256dh as string,
+            auth: sub.auth as string
           }
         };
 
@@ -54,17 +63,18 @@ export async function sendPushNotification(userId, notification) {
         );
       } catch (error) {
         failed++;
-        console.error('Push notification error:', error);
+        const err = error as any;
+        console.error('Push notification error:', err);
 
         // Log failure
         await db.query(
           `INSERT INTO notification_logs (notification_id, user_id, status, error_message)
            VALUES ($1, $2, 'failed', $3)`,
-          [notification.id, userId, error.message]
+          [notification.id, userId, err.message || String(error)]
         );
 
         // Remove invalid subscription
-        if (error.statusCode === 410 || error.statusCode === 404) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
           await db.query(
             'DELETE FROM push_subscriptions WHERE endpoint = $1',
             [sub.endpoint]

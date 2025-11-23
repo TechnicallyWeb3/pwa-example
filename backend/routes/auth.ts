@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { db } from '../db/connection.js';
@@ -6,8 +6,23 @@ import { db } from '../db/connection.js';
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
 
+interface User {
+  id: number;
+  username: string;
+  email: string;
+  password_hash?: string;
+  created_at?: Date;
+}
+
+export interface AuthRequest extends Request {
+  user?: {
+    userId: number;
+    username: string;
+  };
+}
+
 // Register
-router.post('/register', async (req, res) => {
+router.post('/register', async (req: Request, res: Response) => {
   try {
     const { username, email, password } = req.body;
 
@@ -34,7 +49,7 @@ router.post('/register', async (req, res) => {
       [username, email, passwordHash]
     );
 
-    const user = result.rows[0];
+    const user = result.rows[0] as User;
 
     // Generate token
     const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, {
@@ -56,7 +71,7 @@ router.post('/register', async (req, res) => {
 });
 
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
@@ -74,10 +89,10 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const user = result.rows[0];
+    const user = result.rows[0] as User;
 
     // Verify password
-    const isValid = await bcrypt.compare(password, user.password_hash);
+    const isValid = await bcrypt.compare(password, user.password_hash!);
 
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -103,19 +118,21 @@ router.post('/login', async (req, res) => {
 });
 
 // Middleware to verify token
-export function authenticateToken(req, res, next) {
+export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction): void {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
+    res.status(401).json({ error: 'Access token required' });
+    return;
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
+      res.status(403).json({ error: 'Invalid or expired token' });
+      return;
     }
-    req.user = user;
+    req.user = user as { userId: number; username: string };
     next();
   });
 }

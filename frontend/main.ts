@@ -1,7 +1,7 @@
 // Use runtime hostname when available (for network access from other devices)
 // Fallback to environment variable or localhost
 // This ensures the API URL works when accessing from different IP addresses
-function getApiBaseUrl() {
+function getApiBaseUrl(): string {
   if (typeof window !== 'undefined' && window.location && window.location.hostname) {
     // Use the current hostname so it works from any IP address on the network
     const hostname = window.location.hostname;
@@ -9,24 +9,52 @@ function getApiBaseUrl() {
     
     // Only use localhost if we're actually on localhost/127.0.0.1
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '') {
-      return import.meta.env.VITE_API_URL || 'http://localhost:3030';
+      return import.meta.env.VITE_API_URL || 'http://localhost:3000';
     }
     
     // Use the actual hostname (e.g., 192.168.1.98) with port 3030
     // This allows the app to work when accessed from other devices on the network
-    return `${protocol}//${hostname}:3030`;
+    return `${protocol}//${hostname}:3000`;
   }
   
   // Fallback for SSR or before window is available
-  return import.meta.env.VITE_API_URL || 'http://localhost:3030';
+  return import.meta.env.VITE_API_URL || 'http://localhost:3000';
 }
 
 // Compute API_BASE_URL at runtime to ensure we have the correct hostname
 const API_BASE_URL = getApiBaseUrl();
 
-let currentUser = null;
-let authToken = null;
-let vapidPublicKey = null;
+interface User {
+  id: number;
+  username: string;
+  email: string;
+}
+
+interface Notification {
+  id: number;
+  user_id: number;
+  title: string;
+  body: string;
+  scheduled_time: string;
+  repeat_daily: boolean;
+  is_active: boolean;
+  created_at: string;
+}
+
+interface Log {
+  id: number;
+  notification_id: number;
+  user_id: number;
+  status: string;
+  sent_at: string;
+  error_message?: string;
+  title: string;
+  body: string;
+}
+
+let currentUser: User | null = null;
+let authToken: string | null = null;
+let vapidPublicKey: string | null = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -38,7 +66,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check for saved auth token
   authToken = localStorage.getItem('authToken');
-  currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+  const userStr = localStorage.getItem('currentUser');
+  currentUser = userStr ? JSON.parse(userStr) : null;
 
   if (authToken && currentUser) {
     showApp();
@@ -62,34 +91,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupNotificationForm();
 });
 
-function setupInstallPrompt() {
-  let deferredPrompt;
+function setupInstallPrompt(): void {
+  let deferredPrompt: BeforeInstallPromptEvent | null = null;
 
-  window.addEventListener('beforeinstallprompt', (e) => {
+  interface BeforeInstallPromptEvent extends Event {
+    prompt(): Promise<void>;
+    userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+  }
+
+  window.addEventListener('beforeinstallprompt', (e: Event) => {
     e.preventDefault();
-    deferredPrompt = e;
+    deferredPrompt = e as BeforeInstallPromptEvent;
     const installPrompt = document.getElementById('installPrompt');
     if (installPrompt) {
       installPrompt.classList.remove('hidden');
     }
   });
 
-  document.getElementById('installBtn').addEventListener('click', async () => {
-    if (!deferredPrompt) return;
+  const installBtn = document.getElementById('installBtn');
+  if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
 
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    
-    if (outcome === 'accepted') {
-      console.log('User accepted install');
-    }
-    
-    deferredPrompt = null;
-    document.getElementById('installPrompt').classList.add('hidden');
-  });
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      
+      if (outcome === 'accepted') {
+        console.log('User accepted install');
+      }
+      
+      deferredPrompt = null;
+      const prompt = document.getElementById('installPrompt');
+      if (prompt) {
+        prompt.classList.add('hidden');
+      }
+    });
+  }
 }
 
-async function initializePushNotifications(registration) {
+async function initializePushNotifications(registration: ServiceWorkerRegistration): Promise<void> {
   try {
     // Get VAPID public key
     const response = await fetch(`${API_BASE_URL}/api/notifications/vapid-public-key`);
@@ -111,7 +151,7 @@ async function initializePushNotifications(registration) {
     // Subscribe to push notifications
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as BufferSource
     });
 
     // Send subscription to server
@@ -130,7 +170,7 @@ async function initializePushNotifications(registration) {
   }
 }
 
-function urlBase64ToUint8Array(base64String) {
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding)
     .replace(/\-/g, '+')
@@ -145,119 +185,146 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-function setupAuthForms() {
+function setupAuthForms(): void {
   // Login form
-  document.getElementById('loginFormElement').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = document.getElementById('loginUsername').value;
-    const password = document.getElementById('loginPassword').value;
+  const loginForm = document.getElementById('loginFormElement');
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e: Event) => {
+      e.preventDefault();
+      const usernameInput = document.getElementById('loginUsername') as HTMLInputElement;
+      const passwordInput = document.getElementById('loginPassword') as HTMLInputElement;
+      const username = usernameInput?.value;
+      const password = passwordInput?.value;
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (response.ok) {
-        authToken = data.token;
-        currentUser = data.user;
-        localStorage.setItem('authToken', authToken);
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
-        showApp();
-        
-        // Setup push notifications after login
-        if ('serviceWorker' in navigator) {
-          const registration = await navigator.serviceWorker.ready;
-          initializePushNotifications(registration);
+        if (response.ok) {
+          authToken = data.token;
+          currentUser = data.user;
+          if (authToken) {
+            localStorage.setItem('authToken', authToken);
+          }
+          if (currentUser) {
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+          }
+          showApp();
+          
+          // Setup push notifications after login
+          if ('serviceWorker' in navigator) {
+            const registration = await navigator.serviceWorker.ready;
+            initializePushNotifications(registration);
+          }
+        } else {
+          showError('authError', data.error || 'Login failed');
         }
-      } else {
-        showError('authError', data.error || 'Login failed');
+      } catch (error) {
+        showError('authError', 'Network error. Please try again.');
       }
-    } catch (error) {
-      showError('authError', 'Network error. Please try again.');
-    }
-  });
+    });
+  }
 
   // Register form
-  document.getElementById('registerFormElement').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = document.getElementById('registerUsername').value;
-    const email = document.getElementById('registerEmail').value;
-    const password = document.getElementById('registerPassword').value;
+  const registerForm = document.getElementById('registerFormElement');
+  if (registerForm) {
+    registerForm.addEventListener('submit', async (e: Event) => {
+      e.preventDefault();
+      const usernameInput = document.getElementById('registerUsername') as HTMLInputElement;
+      const emailInput = document.getElementById('registerEmail') as HTMLInputElement;
+      const passwordInput = document.getElementById('registerPassword') as HTMLInputElement;
+      const username = usernameInput?.value;
+      const email = emailInput?.value;
+      const password = passwordInput?.value;
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email, password })
-      });
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, email, password })
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (response.ok) {
-        authToken = data.token;
-        currentUser = data.user;
-        localStorage.setItem('authToken', authToken);
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
-        showApp();
-        
-        // Setup push notifications after registration
-        if ('serviceWorker' in navigator) {
-          const registration = await navigator.serviceWorker.ready;
-          initializePushNotifications(registration);
+        if (response.ok) {
+          authToken = data.token;
+          currentUser = data.user;
+          if (authToken) {
+            localStorage.setItem('authToken', authToken);
+          }
+          if (currentUser) {
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+          }
+          showApp();
+          
+          // Setup push notifications after registration
+          if ('serviceWorker' in navigator) {
+            const registration = await navigator.serviceWorker.ready;
+            initializePushNotifications(registration);
+          }
+        } else {
+          showError('authError', data.error || 'Registration failed');
         }
-      } else {
-        showError('authError', data.error || 'Registration failed');
+      } catch (error) {
+        showError('authError', 'Network error. Please try again.');
       }
-    } catch (error) {
-      showError('authError', 'Network error. Please try again.');
-    }
-  });
+    });
+  }
 }
 
-function setupNotificationForm() {
-  document.getElementById('notificationForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
+function setupNotificationForm(): void {
+  const form = document.getElementById('notificationForm');
+  if (form) {
+    form.addEventListener('submit', async (e: Event) => {
+      e.preventDefault();
 
-    const title = document.getElementById('notificationTitle').value;
-    const body = document.getElementById('notificationBody').value;
-    const scheduled_time = document.getElementById('notificationTime').value;
-    const repeat_daily = document.getElementById('repeatDaily').checked;
+      const titleInput = document.getElementById('notificationTitle') as HTMLInputElement;
+      const bodyInput = document.getElementById('notificationBody') as HTMLInputElement;
+      const timeInput = document.getElementById('notificationTime') as HTMLInputElement;
+      const repeatInput = document.getElementById('repeatDaily') as HTMLInputElement;
+      
+      const title = titleInput?.value;
+      const body = bodyInput?.value;
+      const scheduled_time = timeInput?.value;
+      const repeat_daily = repeatInput?.checked;
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/notifications`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
-          title,
-          body,
-          scheduled_time: new Date(scheduled_time).toISOString(),
-          repeat_daily: repeat_daily
-        })
-      });
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/notifications`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            title,
+            body,
+            scheduled_time: new Date(scheduled_time).toISOString(),
+            repeat_daily: repeat_daily
+          })
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (response.ok) {
-        showSuccess('notificationSuccess', 'Notification scheduled successfully!');
-        document.getElementById('notificationForm').reset();
-        loadNotifications();
-      } else {
-        showError('notificationError', data.error || 'Failed to schedule notification');
+        if (response.ok) {
+          showSuccess('notificationSuccess', 'Notification scheduled successfully!');
+          (form as HTMLFormElement).reset();
+          loadNotifications();
+        } else {
+          showError('notificationError', data.error || 'Failed to schedule notification');
+        }
+      } catch (error) {
+        showError('notificationError', 'Network error. Please try again.');
       }
-    } catch (error) {
-      showError('notificationError', 'Network error. Please try again.');
-    }
-  });
+    });
+  }
 }
 
-async function loadNotifications() {
+async function loadNotifications(): Promise<void> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/notifications`, {
       headers: {
@@ -265,15 +332,16 @@ async function loadNotifications() {
       }
     });
 
-    const notifications = await response.json();
+    const notifications: Notification[] = await response.json();
     displayNotifications(notifications);
   } catch (error) {
     console.error('Error loading notifications:', error);
   }
 }
 
-function displayNotifications(notifications) {
+function displayNotifications(notifications: Notification[]): void {
   const list = document.getElementById('notificationsList');
+  if (!list) return;
   
   if (notifications.length === 0) {
     list.innerHTML = '<p>No scheduled notifications</p>';
@@ -296,7 +364,7 @@ function displayNotifications(notifications) {
   `).join('');
 }
 
-async function deleteNotification(id) {
+async function deleteNotification(id: number): Promise<void> {
   if (!confirm('Delete this notification?')) return;
 
   try {
@@ -315,7 +383,7 @@ async function deleteNotification(id) {
   }
 }
 
-async function loadLogs() {
+async function loadLogs(): Promise<void> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/notifications/logs`, {
       headers: {
@@ -323,15 +391,16 @@ async function loadLogs() {
       }
     });
 
-    const logs = await response.json();
+    const logs: Log[] = await response.json();
     displayLogs(logs);
   } catch (error) {
     console.error('Error loading logs:', error);
   }
 }
 
-function displayLogs(logs) {
+function displayLogs(logs: Log[]): void {
   const list = document.getElementById('logsList');
+  if (!list) return;
   
   if (logs.length === 0) {
     list.innerHTML = '<p>No logs yet</p>';
@@ -351,50 +420,63 @@ function displayLogs(logs) {
   `).join('');
 }
 
-function showAuth() {
-  document.getElementById('authSection').classList.add('active');
-  document.getElementById('appSection').classList.remove('active');
+function showAuth(): void {
+  const authSection = document.getElementById('authSection');
+  const appSection = document.getElementById('appSection');
+  if (authSection) authSection.classList.add('active');
+  if (appSection) appSection.classList.remove('active');
 }
 
-function showApp() {
-  document.getElementById('authSection').classList.remove('active');
-  document.getElementById('appSection').classList.add('active');
+function showApp(): void {
+  const authSection = document.getElementById('authSection');
+  const appSection = document.getElementById('appSection');
+  if (authSection) authSection.classList.remove('active');
+  if (appSection) appSection.classList.add('active');
   
   if (currentUser) {
-    document.getElementById('userInfo').textContent = `Logged in as ${currentUser.username}`;
+    const userInfo = document.getElementById('userInfo');
+    if (userInfo) {
+      userInfo.textContent = `Logged in as ${currentUser.username}`;
+    }
   }
   
   loadNotifications();
 }
 
-function showLogin() {
-  document.getElementById('loginForm').style.display = 'block';
-  document.getElementById('registerForm').style.display = 'none';
+function showLogin(): void {
+  const loginForm = document.getElementById('loginForm');
+  const registerForm = document.getElementById('registerForm');
+  if (loginForm) loginForm.style.display = 'block';
+  if (registerForm) registerForm.style.display = 'none';
 }
 
-function showRegister() {
-  document.getElementById('loginForm').style.display = 'none';
-  document.getElementById('registerForm').style.display = 'block';
+function showRegister(): void {
+  const loginForm = document.getElementById('loginForm');
+  const registerForm = document.getElementById('registerForm');
+  if (loginForm) loginForm.style.display = 'none';
+  if (registerForm) registerForm.style.display = 'block';
 }
 
-function switchTab(tabName) {
+function switchTab(tabName: string, event: Event): void {
   // Update tab buttons
   document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-  event.target.classList.add('active');
+  (event.target as HTMLElement).classList.add('active');
 
   // Update tab content
   document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
   
   if (tabName === 'notifications') {
-    document.getElementById('notificationsTab').classList.add('active');
+    const tab = document.getElementById('notificationsTab');
+    if (tab) tab.classList.add('active');
     loadNotifications();
   } else if (tabName === 'logs') {
-    document.getElementById('logsTab').classList.add('active');
+    const tab = document.getElementById('logsTab');
+    if (tab) tab.classList.add('active');
     loadLogs();
   }
 }
 
-function logout() {
+function logout(): void {
   authToken = null;
   currentUser = null;
   localStorage.removeItem('authToken');
@@ -403,7 +485,7 @@ function logout() {
   showLogin();
 }
 
-function showError(elementId, message) {
+function showError(elementId: string, message: string): void {
   const element = document.getElementById(elementId);
   if (element) {
     element.textContent = message;
@@ -412,7 +494,7 @@ function showError(elementId, message) {
   }
 }
 
-function showSuccess(elementId, message) {
+function showSuccess(elementId: string, message: string): void {
   const element = document.getElementById(elementId);
   if (element) {
     element.textContent = message;
@@ -421,17 +503,34 @@ function showSuccess(elementId, message) {
   }
 }
 
-function escapeHtml(text) {
+function escapeHtml(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
 }
 
-function showDebugPage() {
+interface DebugInfo {
+  apiBaseUrl: string;
+  viteApiUrl: string;
+  currentUrl: string;
+  hostname: string;
+  protocol: string;
+  userAgent: string;
+  serviceWorkerSupported: boolean;
+  notificationSupported: boolean;
+  pushManagerSupported: boolean;
+  localStorageAvailable: boolean;
+  currentUser: User | null;
+  hasAuthToken: boolean;
+  vapidPublicKey: string;
+  timestamp: string;
+}
+
+function showDebugPage(): void {
   const container = document.querySelector('.container');
   if (!container) return;
 
-  const debugInfo = {
+  const debugInfo: DebugInfo = {
     apiBaseUrl: API_BASE_URL,
     viteApiUrl: import.meta.env.VITE_API_URL || 'not set',
     currentUrl: window.location.href,
@@ -462,7 +561,7 @@ function showDebugPage() {
           <p style="font-size: 12px; color: #666; margin-top: 5px;">
             ${debugInfo.hostname === 'localhost' || debugInfo.hostname === '127.0.0.1' || !debugInfo.hostname
               ? 'Using env var or localhost (local access)'
-              : `Built from runtime hostname: ${debugInfo.hostname}:3030`}
+              : `Built from runtime hostname: ${debugInfo.hostname}:3000`}
           </p>
         </div>
         <div class="debug-item">
@@ -486,7 +585,7 @@ function showDebugPage() {
         </div>
         <div class="debug-item">
           <strong>Expected API URL:</strong>
-          <code>${escapeHtml(`${debugInfo.protocol}//${debugInfo.hostname}:3030`)}</code>
+          <code>${escapeHtml(`${debugInfo.protocol}//${debugInfo.hostname}:3000`)}</code>
         </div>
       </div>
 
@@ -557,7 +656,7 @@ function showDebugPage() {
   `;
 }
 
-async function testApiConnection() {
+async function testApiConnection(): Promise<void> {
   const resultDiv = document.getElementById('apiTestResult');
   if (!resultDiv) return;
 
@@ -574,20 +673,22 @@ async function testApiConnection() {
       </div>
     `;
   } catch (error) {
+    const err = error as Error;
     resultDiv.innerHTML = `
       <div class="error" style="margin-top: 10px;">
         <strong>✗ Connection Failed</strong><br>
-        Error: ${escapeHtml(error.message)}
+        Error: ${escapeHtml(err.message)}
       </div>
     `;
   }
 }
 
 // Make functions globally available
-window.showLogin = showLogin;
-window.showRegister = showRegister;
-window.switchTab = switchTab;
-window.logout = logout;
-window.deleteNotification = deleteNotification;
-window.testApiConnection = testApiConnection;
+(window as any).showLogin = showLogin;
+(window as any).showRegister = showRegister;
+(window as any).switchTab = (tabName: string) => switchTab(tabName, window.event!);
+(window as any).logout = logout;
+(window as any).deleteNotification = deleteNotification;
+(window as any).testApiConnection = testApiConnection;
+
 

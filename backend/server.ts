@@ -28,13 +28,13 @@ app.get('/health', (req, res) => {
 });
 
 // Test connection and initialize database
-async function startServer() {
+async function startServer(): Promise<void> {
   try {
     await connectWithRetry();
     await initializeDatabase();
     initializeCronJobs();
     
-    app.listen(PORT, '0.0.0.0', () => {
+    app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
   } catch (error) {
@@ -44,4 +44,5 @@ async function startServer() {
 }
 
 startServer();
+
 
