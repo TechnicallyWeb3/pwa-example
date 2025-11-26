@@ -2,11 +2,8 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: pwa-example-postgres
-    environment:
-      POSTGRES_USER: pwa_user
-      POSTGRES_PASSWORD: pwa_password
-      POSTGRES_DB: pwa_db
-      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    env_file:
+      - .env                    # Shared .env file (for DB credentials)
     ports:
       - "5432:5432"
     volumes:
@@ -27,13 +24,10 @@ services:
       dockerfile: Dockerfile
     container_name: pwa-example-backend
     ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://pwa_user:pwa_password@postgres:5432/pwa_db
-      JWT_SECRET: your-super-secret-jwt-key-change-in-production
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
+      - "${PORT:-3001}:${PORT:-3001}"
+    env_file:
+      - .env                    # Shared .env file (for VAPID keys, DB config)
+      - ./backend/.env          # Backend-specific .env file
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,8 +45,8 @@ services:
     container_name: pwa-example-frontend
     ports:
       - "5173:5173"
-    environment:
-      VITE_API_URL: http://localhost:3000
+    env_file:
+      - ./frontend/.env          # Frontend-specific .env file
     volumes:
       - ./frontend:/app
       - /app/node_modules

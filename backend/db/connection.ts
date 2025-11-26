@@ -1,8 +1,9 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 import type { Pool as PoolType } from 'pg';
+import { DATABASE_URL } from '../app.config.js';
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://pwa_user:pwa_password@postgres:5432/pwa_db';
+const connectionString = DATABASE_URL;
 
 // Create connection pool with retry logic
 export const db: PoolType = new Pool({

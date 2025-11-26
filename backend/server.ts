@@ -3,14 +3,24 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
 import notificationRoutes from './routes/notifications.js';
+import chatRoutes from './routes/chat.js';
 import { db, connectWithRetry } from './db/connection.js';
 import { initializeDatabase } from './db/init.js';
 import { initializeCronJobs } from './services/scheduler.js';
+import { serverConfig, validateConfig } from './app.config.js';
 
 dotenv.config();
 
+// Validate configuration on startup
+try {
+  validateConfig();
+} catch (error) {
+  console.error('❌ Configuration validation failed:', error);
+  process.exit(1);
+}
+
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = serverConfig.port;
 
 app.use(cors());
 app.use(express.json());
@@ -21,6 +31,7 @@ export { db };
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

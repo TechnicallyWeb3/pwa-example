@@ -1,22 +1,19 @@
 import express, { Request, Response } from 'express';
 import { db } from '../db/connection.js';
 import { authenticateToken, AuthRequest } from './auth.js';
+import { vapidConfig } from '../app.config.js';
 import webpush from 'web-push';
 
 const router = express.Router();
 
-// Initialize VAPID keys (should be set via environment variables)
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
-
-if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+// Initialize VAPID keys from config
+if (vapidConfig.publicKey && vapidConfig.privateKey) {
+  webpush.setVapidDetails(vapidConfig.subject, vapidConfig.publicKey, vapidConfig.privateKey);
 }
 
 // Get VAPID public key
 router.get('/vapid-public-key', (req: Request, res: Response) => {
-  res.json({ publicKey: VAPID_PUBLIC_KEY });
+  res.json({ publicKey: vapidConfig.publicKey });
 });
 
 // Save push subscription
