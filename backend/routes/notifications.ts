@@ -29,6 +29,12 @@ router.post('/subscribe', authenticateToken, async (req: AuthRequest, res: Respo
       return res.status(400).json({ error: 'Invalid subscription object' });
     }
 
+    // Verify user exists in database
+    const userCheck = await db.query('SELECT id FROM users WHERE id = $1', [userId]);
+    if (userCheck.rows.length === 0) {
+      return res.status(401).json({ error: 'User not found. Please log in again.' });
+    }
+
     await db.query(
       `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
        VALUES ($1, $2, $3, $4)
@@ -165,6 +171,80 @@ router.get('/logs', authenticateToken, async (req: AuthRequest, res: Response) =
     res.json(result.rows);
   } catch (error) {
     console.error('Get logs error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Submit notification reply
+router.post('/reply', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { notification_id, notification_log_id, reply_text } = req.body;
+    const userId = req.user!.userId;
+
+    if (!notification_id || !reply_text) {
+      return res.status(400).json({ error: 'notification_id and reply_text are required' });
+    }
+
+    // Verify the notification belongs to the user
+    const notificationCheck = await db.query(
+      'SELECT id FROM notifications WHERE id = $1 AND user_id = $2',
+      [notification_id, userId]
+    );
+
+    if (notificationCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    // Insert the reply
+    console.log(`💾 Inserting reply - Notification ID: ${notification_id}, Log ID: ${notification_log_id}, User: ${userId}, Reply: "${reply_text.substring(0, 50)}${reply_text.length > 50 ? '...' : ''}"`);
+    
+    const result = await db.query(
+      `INSERT INTO notification_replies (notification_id, notification_log_id, user_id, reply_text)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [notification_id, notification_log_id || null, userId, reply_text]
+    );
+
+    const reply = result.rows[0];
+    console.log(`✅ Notification reply saved - Reply ID: ${reply.id}, Notification ID: ${notification_id}, User: ${userId}`);
+
+    res.status(201).json(reply);
+  } catch (error) {
+    console.error('Submit reply error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get replies for a notification
+router.get('/:id/replies', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.userId;
+
+    console.log(`🔍 Fetching replies for notification ${id}, user ${userId}`);
+
+    // Verify the notification belongs to the user
+    const notificationCheck = await db.query(
+      'SELECT id FROM notifications WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+
+    if (notificationCheck.rows.length === 0) {
+      console.log(`⚠️ Notification ${id} not found for user ${userId}`);
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    const result = await db.query(
+      `SELECT * FROM notification_replies
+       WHERE notification_id = $1 AND user_id = $2
+       ORDER BY created_at DESC`,
+      [id, userId]
+    );
+
+    console.log(`📋 Found ${result.rows.length} reply(ies) for notification ${id}`);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get replies error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

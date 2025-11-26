@@ -52,6 +52,18 @@ export async function initializeDatabase(): Promise<void> {
       )
     `);
 
+    // Create notification_replies table
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS notification_replies (
+        id SERIAL PRIMARY KEY,
+        notification_id INTEGER REFERENCES notifications(id) ON DELETE CASCADE,
+        notification_log_id INTEGER REFERENCES notification_logs(id) ON DELETE SET NULL,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        reply_text TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Error initializing database:', error);

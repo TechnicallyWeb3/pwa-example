@@ -33,8 +33,8 @@ interface User {
 interface Notification {
   id: number;
   user_id: number;
-  title: string;
-  body: string;
+  readonly title: string;
+  readonly body: string;
   scheduled_time: string;
   repeat_daily: boolean;
   is_active: boolean;
@@ -50,11 +50,31 @@ interface Log {
   error_message?: string;
   title: string;
   body: string;
+  replies?: Reply[];
+}
+
+interface Reply {
+  id: number;
+  notification_id: number;
+  notification_log_id: number | null;
+  user_id: number;
+  reply_text: string;
+  created_at: string;
 }
 
 let currentUser: User | null = null;
 let authToken: string | null = null;
 let vapidPublicKey: string | null = null;
+
+// Helper function to handle 401 responses
+function handleAuthError(response: Response): boolean {
+  if (response.status === 401) {
+    console.warn('Unauthorized - clearing token and redirecting to login');
+    logout();
+    return true;
+  }
+  return false;
+}
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -70,7 +90,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   currentUser = userStr ? JSON.parse(userStr) : null;
 
   if (authToken && currentUser) {
-    showApp();
+    // Verify token is still valid by making a test request
+    verifyTokenAndShowApp();
   } else {
     showAuth();
   }
@@ -83,6 +104,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     navigator.serviceWorker.register('/sw.js').then(registration => {
       console.log('Service Worker registered');
       initializePushNotifications(registration);
+      setupServiceWorkerMessageListener(registration);
     });
   }
 
@@ -156,7 +178,7 @@ async function initializePushNotifications(registration: ServiceWorkerRegistrati
 
     // Send subscription to server
     if (authToken) {
-      await fetch(`${API_BASE_URL}/api/notifications/subscribe`, {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/subscribe`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -164,6 +186,10 @@ async function initializePushNotifications(registration: ServiceWorkerRegistrati
         },
         body: JSON.stringify({ subscription })
       });
+
+      if (handleAuthError(response)) {
+        return;
+      }
     }
   } catch (error) {
     console.error('Push notification setup error:', error);
@@ -183,6 +209,128 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+// Track processed replies to prevent duplicates
+const processedReplies = new Set<string>();
+
+function setupServiceWorkerMessageListener(_registration: ServiceWorkerRegistration): void {
+  // Listen for messages from service worker (only need one listener)
+  navigator.serviceWorker.addEventListener('message', async (event) => {
+    console.log('📨 Service worker message received:', event.data);
+    if (event.data && event.data.type === 'NOTIFICATION_REPLY') {
+      const { notificationId, notificationLogId, replyText } = event.data;
+      
+      // Create a unique key for this reply to prevent duplicate processing
+      const replyKey = `${notificationId}-${notificationLogId}-${replyText}-${Date.now()}`;
+      
+      // Check if we've already processed this reply (within last 5 seconds)
+      const recentKey = Array.from(processedReplies).find(key => 
+        key.startsWith(`${notificationId}-${notificationLogId}-${replyText}`)
+      );
+      
+      if (recentKey) {
+        console.log('⏭️ Skipping duplicate reply:', { notificationId, notificationLogId, replyText });
+        return;
+      }
+      
+      // Mark as processed
+      processedReplies.add(replyKey);
+      
+      // Clean up old entries (keep only last 10)
+      if (processedReplies.size > 10) {
+        const entries = Array.from(processedReplies);
+        entries.slice(0, entries.length - 10).forEach(key => processedReplies.delete(key));
+      }
+      
+      console.log('📨 Processing NOTIFICATION_REPLY message:', { notificationId, notificationLogId, replyText });
+      await submitNotificationReply(notificationId, notificationLogId, replyText);
+    }
+  });
+}
+
+async function submitNotificationReply(
+  notificationId: number,
+  notificationLogId: number | null,
+  replyText: string
+): Promise<void> {
+  console.log('📤 Submitting reply:', { notificationId, notificationLogId, replyText });
+  
+  if (!authToken) {
+    console.error('No auth token available for reply submission');
+    return;
+  }
+
+  try {
+    const requestBody = {
+      notification_id: notificationId,
+      notification_log_id: notificationLogId,
+      reply_text: replyText
+    };
+    console.log('📤 Sending reply request:', requestBody);
+    
+    const response = await fetch(`${API_BASE_URL}/api/notifications/reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    console.log('📥 Reply response status:', response.status);
+
+    if (response.ok) {
+      const result = await response.json();
+      console.log('✅ Reply submitted successfully:', result);
+      // Always reload logs to show the new reply (user might switch to logs tab)
+      await loadLogs();
+    } else {
+      const error = await response.json();
+      console.error('❌ Failed to submit reply:', error);
+      alert(`Failed to submit reply: ${error.error || 'Unknown error'}`);
+    }
+  } catch (error) {
+    console.error('❌ Error submitting reply:', error);
+  }
+}
+
+async function processPendingReplies(): Promise<void> {
+  try {
+    // Open IndexedDB and get pending replies
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('pwa-notifications', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains('pendingReplies')) {
+          db.createObjectStore('pendingReplies', { keyPath: 'timestamp' });
+        }
+      };
+    });
+
+    const transaction = db.transaction('pendingReplies', 'readwrite');
+    const store = transaction.objectStore('pendingReplies');
+    const getAllRequest = store.getAll();
+
+    getAllRequest.onsuccess = async () => {
+      const pendingReplies = getAllRequest.result;
+      for (const reply of pendingReplies) {
+        await submitNotificationReply(
+          reply.notificationId,
+          reply.notificationLogId,
+          reply.replyText
+        );
+        // Remove processed reply
+        store.delete(reply.timestamp);
+      }
+    };
+
+    db.close();
+  } catch (error) {
+    console.error('Error processing pending replies:', error);
+  }
 }
 
 function setupAuthForms(): void {
@@ -220,6 +368,7 @@ function setupAuthForms(): void {
           if ('serviceWorker' in navigator) {
             const registration = await navigator.serviceWorker.ready;
             initializePushNotifications(registration);
+            processPendingReplies();
           }
         } else {
           showError('authError', data.error || 'Login failed');
@@ -266,6 +415,7 @@ function setupAuthForms(): void {
           if ('serviceWorker' in navigator) {
             const registration = await navigator.serviceWorker.ready;
             initializePushNotifications(registration);
+            processPendingReplies();
           }
         } else {
           showError('authError', data.error || 'Registration failed');
@@ -332,6 +482,14 @@ async function loadNotifications(): Promise<void> {
       }
     });
 
+    if (handleAuthError(response)) {
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to load notifications: ${response.status}`);
+    }
+
     const notifications: Notification[] = await response.json();
     displayNotifications(notifications);
   } catch (error) {
@@ -391,7 +549,36 @@ async function loadLogs(): Promise<void> {
       }
     });
 
+    if (handleAuthError(response)) {
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to load logs: ${response.status}`);
+    }
+
     const logs: Log[] = await response.json();
+    
+    // Load replies for each log entry
+    for (const log of logs) {
+      try {
+        const repliesResponse = await fetch(`${API_BASE_URL}/api/notifications/${log.notification_id}/replies`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+        if (repliesResponse.ok) {
+          const replies = await repliesResponse.json();
+          log.replies = replies;
+          console.log(`Loaded ${replies.length} reply(ies) for notification ${log.notification_id}`);
+        } else {
+          console.warn(`Failed to load replies for notification ${log.notification_id}:`, repliesResponse.status);
+        }
+      } catch (error) {
+        console.error(`Error loading replies for log ${log.id}:`, error);
+      }
+    }
+    
     displayLogs(logs);
   } catch (error) {
     console.error('Error loading logs:', error);
@@ -407,7 +594,24 @@ function displayLogs(logs: Log[]): void {
     return;
   }
 
-  list.innerHTML = logs.map(log => `
+  list.innerHTML = logs.map(log => {
+    const replies = log.replies || [];
+    const repliesCount = replies.length;
+    const repliesHtml = repliesCount > 0
+      ? `<div class="replies-section" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
+           <strong>Replies (${repliesCount}):</strong>
+           ${replies.map(reply => `
+             <div class="reply-item" style="margin-top: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px;">
+               <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                 ${new Date(reply.created_at).toLocaleString()}
+               </div>
+               <div>${escapeHtml(reply.reply_text)}</div>
+             </div>
+           `).join('')}
+         </div>`
+      : '';
+    
+    return `
     <div class="log-item ${log.status === 'failed' ? 'failed' : ''}">
       <h4>${escapeHtml(log.title)}</h4>
       <p>${escapeHtml(log.body)}</p>
@@ -416,8 +620,10 @@ function displayLogs(logs: Log[]): void {
         Sent: ${new Date(log.sent_at).toLocaleString()}
         ${log.error_message ? `<br>Error: ${escapeHtml(log.error_message)}` : ''}
       </div>
+      ${repliesHtml}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function showAuth(): void {
@@ -425,6 +631,37 @@ function showAuth(): void {
   const appSection = document.getElementById('appSection');
   if (authSection) authSection.classList.add('active');
   if (appSection) appSection.classList.remove('active');
+}
+
+async function verifyTokenAndShowApp(): Promise<void> {
+  // Verify token is still valid by making a test request
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/notifications`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+
+    if (response.status === 401) {
+      // Token is invalid, clear it and show auth
+      console.warn('Token is invalid, clearing and showing login');
+      logout();
+      return;
+    }
+
+    // Token is valid, show the app
+    showApp();
+    // Process any pending replies if user is already logged in
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then(() => {
+        processPendingReplies();
+      });
+    }
+  } catch (error) {
+    console.error('Error verifying token:', error);
+    // On error, assume token is invalid and show auth
+    logout();
+  }
 }
 
 function showApp(): void {

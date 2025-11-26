@@ -79,8 +79,7 @@ export function initializeCronJobs(): void {
       
       const upcomingCount = await db.query(
         `SELECT COUNT(*) as count FROM notifications 
-         WHERE is_active = true AND scheduled_time > NOW() 
-         ORDER BY scheduled_time LIMIT 5`
+         WHERE is_active = true AND scheduled_time > NOW()`
       );
       if (upcomingCount.rows[0].count > 0) {
         const upcoming = await db.query(

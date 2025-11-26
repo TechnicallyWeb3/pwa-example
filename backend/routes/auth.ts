@@ -118,7 +118,7 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // Middleware to verify token
-export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction): void {
+export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -127,13 +127,30 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
     return;
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, async (err, user) => {
     if (err) {
       res.status(403).json({ error: 'Invalid or expired token' });
       return;
     }
-    req.user = user as { userId: number; username: string };
-    next();
+
+    const decodedUser = user as { userId: number; username: string };
+    
+    // Verify user still exists in database
+    try {
+      const userCheck = await db.query('SELECT id, username FROM users WHERE id = $1', [decodedUser.userId]);
+      if (userCheck.rows.length === 0) {
+        res.status(401).json({ error: 'User not found. Please log in again.' });
+        return;
+      }
+      req.user = {
+        userId: userCheck.rows[0].id,
+        username: userCheck.rows[0].username
+      };
+      next();
+    } catch (error) {
+      console.error('Error verifying user:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 }
 

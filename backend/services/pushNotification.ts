@@ -31,12 +31,43 @@ export async function sendPushNotification(
     
     console.log(`📱 Found ${subscriptions.rows.length} push subscription(s) for user ${userId}`);
 
+    // Create a log entry first to get the log ID
+    const logResult = await db.query(
+      `INSERT INTO notification_logs (notification_id, user_id, status)
+       VALUES ($1, $2, 'pending')
+       RETURNING id`,
+      [notification.id, userId]
+    );
+    const logId = logResult.rows[0].id;
+
     const payload = JSON.stringify({
       title: notification.title,
       body: notification.body,
       icon: '/icon-192x192.png',
-      badge: '/icon-192x192.png'
+      badge: '/icon-192x192.png',
+      data: {
+        notificationId: notification.id,
+        notificationLogId: logId,
+        userId: userId
+      },
+      actions: [
+        {
+          action: 'reply',
+          title: 'Reply',
+          type: 'text',
+          placeholder: 'Type your reply...'
+        },
+        {
+          action: 'view',
+          title: 'View'
+        }
+      ],
+      requireInteraction: false,
+      // Add tag to help identify notifications
+      tag: `notification-${notification.id}`
     });
+    
+    console.log('📤 Sending notification payload:', payload);
 
     let sent = 0;
     let failed = 0;
@@ -54,24 +85,10 @@ export async function sendPushNotification(
 
         await webpush.sendNotification(pushSubscription, payload);
         sent++;
-
-        // Log success
-        await db.query(
-          `INSERT INTO notification_logs (notification_id, user_id, status)
-           VALUES ($1, $2, 'sent')`,
-          [notification.id, userId]
-        );
       } catch (error) {
         failed++;
         const err = error as any;
         console.error('Push notification error:', err);
-
-        // Log failure
-        await db.query(
-          `INSERT INTO notification_logs (notification_id, user_id, status, error_message)
-           VALUES ($1, $2, 'failed', $3)`,
-          [notification.id, userId, err.message || String(error)]
-        );
 
         // Remove invalid subscription
         if (err.statusCode === 410 || err.statusCode === 404) {
@@ -81,6 +98,19 @@ export async function sendPushNotification(
           );
         }
       }
+    }
+
+    // Update log entry with final status
+    if (sent > 0) {
+      await db.query(
+        `UPDATE notification_logs SET status = 'sent' WHERE id = $1`,
+        [logId]
+      );
+    } else if (failed > 0) {
+      await db.query(
+        `UPDATE notification_logs SET status = 'failed', error_message = $1 WHERE id = $2`,
+        ['All subscription attempts failed', logId]
+      );
     }
 
     return { sent, failed };
