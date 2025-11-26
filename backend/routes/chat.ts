@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import { db } from '../db/connection.js';
 import { authenticateToken, AuthRequest } from './auth.js';
-import { chatWithGemini, ChatMessage } from '../services/gemini.js';
+import { chatWithGemini, generateChatTitle, ChatMessage } from '../services/gemini.js';
 
 const router = express.Router();
 
@@ -135,16 +135,63 @@ router.post('/chats/:chatId/messages', authenticateToken, async (req: AuthReques
 
     // Verify or create chat
     let chatResult = await db.query(
-      'SELECT chat_id FROM chats WHERE chat_id = $1 AND user_id = $2',
+      'SELECT chat_id, title FROM chats WHERE chat_id = $1 AND user_id = $2',
       [chatId, req.user.userId]
     );
 
+    let isFirstMessage = false;
+    let chatTitle = 'New Chat';
+    
     if (chatResult.rows.length === 0) {
-      // Create new chat
+      // This is a new chat - generate title BEFORE creating it
+      isFirstMessage = true;
+      try {
+        console.log('🔄 Generating title for new chat before creation...');
+        chatTitle = await generateChatTitle(message);
+        console.log(`✅ Title generated before chat creation: "${chatTitle}"`);
+      } catch (error: any) {
+        console.error('❌ Error generating title before chat creation, using fallback:', error.message || error);
+        chatTitle = message.substring(0, 50);
+        console.log(`📝 Using fallback title: "${chatTitle}"`);
+      }
+      
+      // Create new chat with generated title
       await db.query(
         'INSERT INTO chats (chat_id, user_id, title) VALUES ($1, $2, $3)',
-        [chatId, req.user.userId, message.substring(0, 100)]
+        [chatId, req.user.userId, chatTitle]
       );
+      console.log(`💾 Created new chat with title: "${chatTitle}"`);
+    } else {
+      // Check if this is the first message and title needs updating
+      const existingTitle = chatResult.rows[0].title;
+      const messageCountResult = await db.query(
+        'SELECT COUNT(*) as count FROM messages WHERE chat_id = $1 AND "from" = $2',
+        [chatId, 'user']
+      );
+      const userMessageCount = parseInt(messageCountResult.rows[0].count, 10);
+      
+      // Check if title needs updating (first message and default title)
+      isFirstMessage = userMessageCount === 0 && (!existingTitle || existingTitle === 'New Chat' || existingTitle.trim() === '');
+      
+      if (isFirstMessage) {
+        // Generate title for existing chat that needs title update
+        try {
+          console.log('🔄 Generating title for existing chat...');
+          chatTitle = await generateChatTitle(message);
+          console.log(`✅ Title generated: "${chatTitle}"`);
+        } catch (error: any) {
+          console.error('❌ Error generating title, using fallback:', error.message || error);
+          chatTitle = message.substring(0, 50);
+          console.log(`📝 Using fallback title: "${chatTitle}"`);
+        }
+        
+        // Update title
+        await db.query(
+          'UPDATE chats SET title = $1 WHERE chat_id = $2',
+          [chatTitle, chatId]
+        );
+        console.log(`💾 Updated chat title to: "${chatTitle}"`);
+      }
     }
 
     // Save user message
@@ -180,7 +227,6 @@ router.post('/chats/:chatId/messages', authenticateToken, async (req: AuthReques
       aiResponse = await chatWithGemini(message, chatHistory);
     } catch (error: any) {
       console.error('Error getting AI response:', error);
-      // Still save the user message even if AI fails
       throw new Error(`Failed to get AI response: ${error.message || 'Unknown error'}`);
     }
 
