@@ -46,6 +46,13 @@ interface Message {
   trigger_source?: string | null;
   notify: any[];
   message: string;
+  parent_message_id?: string | null;
+  branch_index?: number;
+}
+
+interface BranchInfo {
+  branchCount: number;
+  currentBranch: number;
 }
 
 let currentUser: User | null = null;
@@ -53,6 +60,8 @@ let authToken: string | null = null;
 let currentChatId: string | null = null;
 let chats: Chat[] = [];
 let messages: Message[] = [];
+let branchInfo: Record<string, BranchInfo> = {};
+let currentBranchIndex: number | null = null;
 let isWaitingForResponse = false;
 
 // Helper function to handle 401 responses
@@ -227,7 +236,7 @@ async function sendMessage(messageText: string): Promise<void> {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({ title: messageText.substring(0, 50) || 'New Chat' })
+        body: JSON.stringify({ title: 'New Chat' })
       });
 
       console.log('Chat creation response status:', createResponse.status);
@@ -261,6 +270,8 @@ async function sendMessage(messageText: string): Promise<void> {
       
       currentChatId = chatData.chatId;
       messages = [];
+      branchInfo = {};
+      currentBranchIndex = null;
       
       // Load chats in background (don't wait for it)
       loadChats().catch(err => console.error('Error loading chats:', err));
@@ -407,11 +418,15 @@ async function loadChats(): Promise<void> {
   }
 }
 
-async function loadChat(chatId: string): Promise<void> {
+async function loadChat(chatId: string, branchIndex: number | null = null): Promise<void> {
   if (!authToken) return;
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/chat/chats/${chatId}`, {
+    const url = branchIndex 
+      ? `${API_BASE_URL}/api/chat/chats/${chatId}?branchIndex=${branchIndex}`
+      : `${API_BASE_URL}/api/chat/chats/${chatId}`;
+    
+    const response = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${authToken}`
       }
@@ -427,7 +442,9 @@ async function loadChat(chatId: string): Promise<void> {
 
     const data = await response.json();
     currentChatId = chatId;
+    currentBranchIndex = branchIndex;
     messages = data.messages || [];
+    branchInfo = data.branchInfo || {};
     renderMessages();
     renderChatSidebar();
   } catch (error) {
@@ -459,6 +476,8 @@ async function createNewChat(): Promise<void> {
     const data = await response.json();
     currentChatId = data.chatId;
     messages = [];
+    branchInfo = {};
+    currentBranchIndex = null;
     renderMessages();
     await loadChats();
   } catch (error) {
@@ -499,16 +518,50 @@ function renderMessages(): void {
     return;
   }
 
-  messagesContainer.innerHTML = messages.map(msg => {
+  messagesContainer.innerHTML = messages.map((msg, index) => {
     const isUser = msg.from === 'user';
     const timestamp = new Date(msg.timestamp).toLocaleTimeString();
     const messageHtml = isUser ? escapeHtml(msg.message) : markdownToHtml(msg.message);
     
+    // Get branch info for this message (if it's a parent that has been branched)
+    const info = branchInfo[msg.message_id];
+    
+    // Show branch status if this message has multiple branches
+    // The status shows which branch we're currently viewing
+    const branchStatus = info && info.branchCount > 1 
+      ? `<span class="branch-status">&lt; ${currentBranchIndex || info.currentBranch}/${info.branchCount}</span>`
+      : '';
+    
+    // Show edit button for user messages (only if it's the original, not an edited version)
+    const editButton = isUser && !msg.parent_message_id
+      ? `<button class="message-edit-btn" onclick="editMessage('${msg.message_id}')" title="Edit message">✏️</button>`
+      : '';
+    
+    // Show branch navigation if this message has branches
+    // Only show on the message that was edited (the parent)
+    const branchNav = info && info.branchCount > 1
+      ? `<div class="branch-navigation">
+           ${Array.from({ length: info.branchCount }, (_, i) => i + 1).map(branchNum => {
+             const isActive = (currentBranchIndex || 1) === branchNum;
+             return `<button class="branch-nav-btn ${isActive ? 'active' : ''}" 
+                            onclick="switchBranch('${msg.message_id}', ${branchNum})"
+                            title="Switch to branch ${branchNum}">
+                     ${branchNum}
+                   </button>`;
+           }).join('')}
+         </div>`
+      : '';
+    
     return `
-      <div class="message ${isUser ? 'user' : 'assistant'}">
+      <div class="message ${isUser ? 'user' : 'assistant'}" data-message-id="${msg.message_id}">
+        <div class="message-header">
+          ${editButton}
+          ${branchStatus}
+        </div>
         <div class="message-content">
           ${messageHtml}
         </div>
+        ${branchNav}
         <div class="message-time">${timestamp}</div>
       </div>
     `;
@@ -578,6 +631,8 @@ function logout(): void {
   currentChatId = null;
   chats = [];
   messages = [];
+  branchInfo = {};
+  currentBranchIndex = null;
   localStorage.removeItem('authToken');
   localStorage.removeItem('currentUser');
   showAuth();
@@ -737,7 +792,62 @@ function showDebugPage(): void {
   `;
 }
 
+async function editMessage(messageId: string): Promise<void> {
+  if (!authToken || !currentChatId) return;
+
+  const message = messages.find(m => m.message_id === messageId);
+  if (!message || message.from !== 'user') return;
+
+  const newMessage = prompt('Edit your message:', message.message);
+  if (!newMessage || newMessage.trim() === message.message.trim()) {
+    return; // User cancelled or didn't change the message
+  }
+
+  try {
+    isWaitingForResponse = true;
+    renderMessages(); // Show loading state
+
+    const response = await fetch(`${API_BASE_URL}/api/chat/chats/${currentChatId}/messages/${messageId}/edit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ newMessage: newMessage.trim() })
+    });
+
+    if (handleAuthError(response)) {
+      return;
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to edit message');
+    }
+
+    const data = await response.json();
+    
+    // Reload the chat to show the new branch
+    await loadChat(currentChatId, data.branchIndex);
+  } catch (error: any) {
+    console.error('Error editing message:', error);
+    alert(`Failed to edit message: ${error.message || 'Unknown error'}`);
+  } finally {
+    isWaitingForResponse = false;
+  }
+}
+
+async function switchBranch(messageId: string, branchIndex: number): Promise<void> {
+  if (!currentChatId) return;
+  
+  // Load the chat with the specified branch index
+  // This will show the conversation following that branch
+  await loadChat(currentChatId, branchIndex);
+}
+
 // Make functions globally available
 (window as any).createNewChat = createNewChat;
 (window as any).loadChat = loadChat;
 (window as any).logout = logout;
+(window as any).editMessage = editMessage;
+(window as any).switchBranch = switchBranch;

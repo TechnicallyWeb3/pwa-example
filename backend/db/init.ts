@@ -131,6 +131,29 @@ export async function initializeDatabase(): Promise<void> {
       END $$;
     `);
 
+    // Add branch tracking columns for message editing/branching
+    await db.query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'messages' AND column_name = 'parent_message_id'
+        ) THEN
+          ALTER TABLE messages ADD COLUMN parent_message_id UUID REFERENCES messages(message_id) ON DELETE SET NULL;
+        END IF;
+        
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'messages' AND column_name = 'branch_index'
+        ) THEN
+          ALTER TABLE messages ADD COLUMN branch_index INTEGER DEFAULT 1;
+        END IF;
+      EXCEPTION
+        WHEN OTHERS THEN
+          RAISE NOTICE 'Could not add branch columns: %', SQLERRM;
+      END $$;
+    `);
+
     // Add indexes for better query performance
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)
@@ -140,6 +163,9 @@ export async function initializeDatabase(): Promise<void> {
     `);
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)
+    `);
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_messages_parent_message_id ON messages(parent_message_id)
     `);
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id)
