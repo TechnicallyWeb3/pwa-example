@@ -162,7 +162,7 @@ router.post('/chats/:chatId/messages', authenticateToken, async (req: AuthReques
       );
       console.log(`💾 Created new chat with title: "${chatTitle}"`);
     } else {
-      // Check if this is the first message and title needs updating
+      // Check if this is the first message
       const existingTitle = chatResult.rows[0].title;
       const messageCountResult = await db.query(
         'SELECT COUNT(*) as count FROM messages WHERE chat_id = $1 AND "from" = $2',
@@ -170,13 +170,13 @@ router.post('/chats/:chatId/messages', authenticateToken, async (req: AuthReques
       );
       const userMessageCount = parseInt(messageCountResult.rows[0].count, 10);
       
-      // Check if title needs updating (first message and default title)
-      isFirstMessage = userMessageCount === 0 && (!existingTitle || existingTitle === 'New Chat' || existingTitle.trim() === '');
+      // If this is the first user message and title is "New Chat", generate a proper title
+      isFirstMessage = userMessageCount === 0;
       
-      if (isFirstMessage) {
+      if (isFirstMessage && (existingTitle === 'New Chat' || !existingTitle || existingTitle.trim() === '')) {
         // Generate title for existing chat that needs title update
         try {
-          console.log('🔄 Generating title for existing chat...');
+          console.log('🔄 Generating title for existing chat (first message)...');
           chatTitle = await generateChatTitle(message);
           console.log(`✅ Title generated: "${chatTitle}"`);
         } catch (error: any) {

@@ -227,7 +227,7 @@ async function sendMessage(messageText: string): Promise<void> {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({ title: messageText.substring(0, 50) || 'New Chat' })
+        body: JSON.stringify({ title: 'New Chat' })
       });
 
       console.log('Chat creation response status:', createResponse.status);
